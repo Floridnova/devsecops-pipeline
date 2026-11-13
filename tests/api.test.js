@@ -10,7 +10,7 @@
    test('GET /items returns two items', async () => {
      const res = await request(app).get('/items');
      expect(res.statusCode).toBe(200);
-     expect(res.body).toHaveLength(3);
+     expect(res.body).toHaveLength(2);
    });
 
    test('unknown route returns 404', async () => {

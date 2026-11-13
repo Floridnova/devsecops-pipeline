@@ -1,0 +1,177 @@
+ASSIGNMENT 6 - BUILDING A SECURE CI/CD PIPELINE WITH GITHUB ACTIONS
+Module Six - CI/CD Security with GitHub Actions
+
+Repository: https://github.com/Floridnova/devsecops-pipeline
+Repository visibility: [FILL IN: private with instructor added as collaborator, OR public because I could not add a collaborator]
+
+
+======================================================================
+TASK 1 - CI/CD Concepts
+======================================================================
+
+1. CI, Continuous Delivery, Continuous Deployment
+
+Continuous Integration (CI): every change pushed to the repository is automatically built and tested, so problems are found within minutes of the change instead of weeks later.
+
+Continuous Delivery: the pipeline keeps the software always built, tested and ready to release, but a human must still approve the final step to production.
+
+Continuous Deployment: every change that passes the pipeline is released to production automatically with no human step, so the security gate is the only thing standing between a change and production.
+
+The Delivery-vs-Deployment distinction: the pipeline is the same in both. Delivery ends in a human decision to release; Deployment ends in an automatic release.
+
+2. Four problems with merging with no automated checks
+
+Problem 1: Broken changes reach main. No tests run, so a reviewer who glances at the pull request cannot know whether the code works. This happened twice this term.
+CI/CD benefit that fixes it: automated testing in CI, which catches bugs early and prevents regressions.
+
+Problem 2: An API key was exposed on main. Nothing scans commits for secrets.
+CI/CD benefit that fixes it: automated secret detection and push protection, which reject the commit before the secret enters the repository.
+
+Problem 3: Checks depend on someone remembering them. A scan only helps if a person remembers to run it, and a quick glance varies from day to day (human error and inconsistent testing).
+CI/CD benefit that fixes it: the pipeline runs the same checks on every change, so security no longer depends on anyone remembering.
+
+Problem 4: Vulnerable dependencies and insecure code go unnoticed because nobody scans for them.
+CI/CD benefit that fixes it: dependency scanning and SAST stages, with a security gate that blocks the merge when a requirement fails.
+
+3. Why checks run on the pull request (shift left)
+
+Running security checks on the pull request is "shift left": problems are found as early as possible, when they are cheapest to fix. A pull request is one small, focused change, so a finding points at recent code the developer is still working on. A failing check can also block the merge, so insecure code never enters the main branch. A scan that runs after the push to main only reports a problem that has already been merged.
+
+4. Definitions
+
+Workflow: the whole automated pipeline, defined in a YAML file under .github/workflows/ and triggered by repository events.
+
+Job: one stage of a workflow, made up of steps that run on the same runner.
+
+Step: a single command or action inside a job, such as npm ci or npm test.
+
+Runner: the fresh machine, such as ubuntu-latest, where a job runs.
+
+Action: a reusable, pre-built piece that a step calls, such as actions/checkout@v4.
+
+5. "I run npm audit on my laptop before I push"
+
+Running it by hand depends on a person remembering, and a check that runs when someone remembers is a suggestion, not a control. The laptop scan is also not enforced: nothing stops a teammate from skipping it, and it may run against a different state of the code than what is actually pushed. A pipeline stage runs on every push and pull request, on a clean runner, against exactly what is being merged, and it can fail the build so the change is blocked.
+
+
+======================================================================
+TASK 2 - Build the CI Pipeline
+======================================================================
+
+1. Workflow file: .github/workflows/ci.yml
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Build (syntax check)
+        run: npm run build
+
+2. Node.js version and build step
+
+Node.js version: 22.
+The API has no real build step, so I substituted "npm run build", which runs "node --check" on each source file to verify the syntax is valid.
+The linter is ESLint, used as the code-quality check.
+
+3. One-sentence explanations
+
+Why npm ci rather than npm install: npm ci installs exactly what is in package-lock.json and fails if the lock file and package.json disagree, so every run gets the same reproducible dependencies.
+
+Why the workflow must be in .github/workflows/: GitHub only looks for workflow files in that folder, so a file anywhere else is never detected and never runs.
+
+4. Successful run
+
+Run URL: https://github.com/Floridnova/devsecops-pipeline/actions/runs/43459408883
+
+What each step did:
+
+Check out code - copied the repository's files onto the fresh runner.
+Set up Node.js 22 - installed Node 22 and set up the npm cache.
+Install dependencies - ran npm ci to install exactly from the lock file.
+Run tests - ran the Jest tests against the API.
+Run linter - ran ESLint to check code quality.
+Build (syntax check) - ran node --check on the source files.
+(GitHub also adds automatic Set up job, Post and Complete job steps around these.)
+
+Log text from the Run tests step:
+
+PASS tests/api.test.js
+  ✓ GET /health returns ok (25 ms)
+  ✓ GET /items returns two items (4 ms)
+  ✓ unknown route returns 404 (3 ms)
+Test Suites: 1 passed, 1 total
+Tests:       3 passed, 3 total
+Snapshots:   0 total
+Time:        0.374 s
+Ran all test suites.
+
+Note: my very first run (https://github.com/Floridnova/devsecops-pipeline/actions/runs/43457107460) failed by accident at the Run tests step with "Your test suite must contain at least one test", because tests/api.test.js had been committed empty. I found this by reading the log, filled in the file and pushed again.
+
+5. Break it on purpose
+
+Red run URL: https://github.com/Floridnova/devsecops-pipeline/actions/runs/43462416457
+Step that failed: Run tests.
+Why it failed: I changed the /items test to expect 3 items, but the API returns 2, so Jest reported one failed test and exited with a non-zero code.
+Log text: the Expected/Received block you copy above, plus your summary lines (Tests: 1 failed, 2 passed, 3 total).
+What happened after: the linter and build steps were skipped because the job stopped at the failure.
+Fixed, green run URL: https://github.com/Floridnova/devsecops-pipeline/actions/runs/43504533714
+
+6. Why a failing step stops the whole job
+
+When a step's command exits with an error, GitHub marks the step failed and skips the remaining steps, so the job and the run fail. 
+This is the foundation of a security gate because a security scanner that exits with an error automatically halts the pipeline and can block the merge, which turns a check into a control.
+
+
+======================================================================
+TASK 3 - Secret Detection
+======================================================================
+
+[TO BE COMPLETED]
+
+
+======================================================================
+TASK 4 - Dependency Scanning & SAST
+======================================================================
+
+[TO BE COMPLETED]
+
+
+======================================================================
+TASK 5 - The Security Gate
+======================================================================
+
+[TO BE COMPLETED]
+
+
+======================================================================
+TASK 6 - Pipeline Design, Secrets & Review
+======================================================================
+
+[TO BE COMPLETED]
